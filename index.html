@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Profit Sharing Pool Simulator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <h1>Profit Sharing Pool Simulator</h1>
+  <div class="subtitle">
+    Investors & managers interacting in a BTC-backed pool with share tokens and utilization-based profit sharing.
+  </div>
+
+  <div class="layout">
+    <!-- Controls -->
+    <div class="panel">
+      <h2>Controls</h2>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Initial investors</span>
+          <span class="value" id="investorCountLabel">150</span>
+        </div>
+        <input type="range" min="10" max="500" value="150" id="investorCount">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Initial managers</span>
+          <span class="value" id="managerCountLabel">40</span>
+        </div>
+        <input type="range" min="4" max="200" value="40" id="managerCount">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Profit share @ 0% utilization</span>
+          <span class="value" id="ps0Label">5%</span>
+        </div>
+        <input type="range" min="0" max="0.3" step="0.005" value="0.05" id="ps0">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Profit share @ 100% utilization</span>
+          <span class="value" id="ps1Label">25%</span>
+        </div>
+        <input type="range" min="0" max="0.6" step="0.005" value="0.25" id="ps1">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Simulation steps (days)</span>
+          <span class="value" id="stepsLabel">730</span>
+        </div>
+        <input type="range" min="60" max="730" value="730" id="steps">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>New investor arrival intensity</span>
+          <span class="value" id="arrivalLabel">0.40</span>
+        </div>
+        <input type="range" min="0" max="1" step="0.05" value="0.4" id="arrivalRate">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Initial risk level (utilization)</span>
+          <span class="value" id="riskLabel">70%</span>
+        </div>
+        <input type="range" min="0" max="1" step="0.05" value="0.7" id="riskLevel">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>BTC price source</span>
+          <span class="value" id="priceModeLabel">Synthetic</span>
+        </div>
+        <div class="pill-options">
+          <label class="pill">
+            <input type="radio" name="priceMode" value="synthetic" checked>
+            Synthetic
+          </label>
+          <label class="pill">
+            <input type="radio" name="priceMode" value="historical">
+            Historical (3y)
+          </label>
+        </div>
+        <div class="hint" id="priceSourceStatus">Synthetic random walk</div>
+      </div>
+
+      <div class="btn-row">
+        <button id="runBtn" class="primary">▶ Run simulation</button>
+        <button id="playPauseBtn" class="secondary" disabled>Play</button>
+        <button id="resetBtn" class="secondary" disabled>Reset</button>
+      </div>
+
+      <div class="metrics">
+        <div class="metric-card">
+          <div class="metric-label">Time step</div>
+          <div class="metric-value" id="metricTime">–</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Pool value</div>
+          <div class="metric-value" id="metricPool">–</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Token price</div>
+          <div class="metric-value" id="metricToken">–</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Utilization</div>
+          <div class="metric-value" id="metricUtil">–</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Fee rate</div>
+          <div class="metric-value" id="metricFeeRate">–</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Active investors</div>
+          <div class="metric-value" id="metricInvestors">–</div>
+        </div>
+      </div>
+
+      <div class="time-slider-group" id="timeSliderContainer" style="display:none;">
+        <div class="time-label">
+          <span>Scroll time</span>
+          <span id="timeCursorLabel">t = 0</span>
+        </div>
+        <input type="range" min="0" max="0" value="0" id="timeSlider">
+      </div>
+
+      <p class="small-text">
+        Pool value = cash (unutilized) + BTC position value.<br>
+        Share tokens are minted on deposit and burned on exit; token price follows <code>pool_value / total_tokens</code>.<br>
+        Manager fees use a linear rate between the 0% and 100% utilization sliders.
+      </p>
+    </div>
+
+    <!-- Charts -->
+    <div class="panel">
+      <h2>Charts</h2>
+      <div class="charts">
+        <div class="chart-wrapper">
+          <canvas id="poolChart"></canvas>
+        </div>
+        <div class="chart-wrapper">
+          <canvas id="utilChart"></canvas>
+        </div>
+        <div class="chart-wrapper">
+          <canvas id="btcChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="simulation_core.js"></script>
+  <script src="charts.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
