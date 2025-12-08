@@ -29,6 +29,7 @@ const stepsInput = document.getElementById("steps");
 const arrivalInput = document.getElementById("arrivalRate");
 const managerArrivalInput = document.getElementById("managerArrivalRate");
 const minInvestorDaysInput = document.getElementById("minInvestorDays");
+const managerUtilLimitInput = document.getElementById("managerUtilLimit");
 const priceModeInputs = document.querySelectorAll("input[name=priceMode]");
 
 const ps0Label = document.getElementById("ps0Label");
@@ -37,6 +38,7 @@ const stepsLabel = document.getElementById("stepsLabel");
 const arrivalLabel = document.getElementById("arrivalLabel");
 const managerArrivalLabel = document.getElementById("managerArrivalLabel");
 const minInvestorDaysLabel = document.getElementById("minInvestorDaysLabel");
+const managerUtilLimitLabel = document.getElementById("managerUtilLimitLabel");
 const priceModeLabel = document.getElementById("priceModeLabel");
 
 const runBtn = document.getElementById("runBtn");
@@ -49,11 +51,14 @@ const metricPool = document.getElementById("metricPool");
 const metricToken = document.getElementById("metricToken");
 const metricUtil = document.getElementById("metricUtil");
 const metricInvestors = document.getElementById("metricInvestors");
+const metricManagers = document.getElementById("metricManagers");
 const investorProfitBody = document.getElementById("investorProfitBody");
 const investorLossBody = document.getElementById("investorLossBody");
 const managerProfitBody = document.getElementById("managerProfitBody");
 const managerLossBody = document.getElementById("managerLossBody");
 const exitQueueBody = document.getElementById("exitQueueBody");
+const transactionsBody = document.getElementById("transactionsBody");
+const transactionsFilter = document.getElementById("transactionsFilter");
 
 function buildOutcomeSummary(sim) {
   const inv = Array.isArray(sim?.investorPnL) ? sim.investorPnL : [];
@@ -84,11 +89,12 @@ function updateLabels() {
   arrivalLabel.textContent = parseFloat(arrivalInput.value).toFixed(2);
   managerArrivalLabel.textContent = parseFloat(managerArrivalInput.value).toFixed(2);
   minInvestorDaysLabel.textContent = minInvestorDaysInput.value;
+  managerUtilLimitLabel.textContent = Math.round(managerUtilLimitInput.value * 100) + "%";
   const mode = document.querySelector("input[name=priceMode]:checked");
   priceModeLabel.textContent = mode && mode.value === "historical" ? "Historical" : "Synthetic";
 }
 
-[ps0Input, ps1Input, stepsInput, arrivalInput, managerArrivalInput, minInvestorDaysInput]
+[ps0Input, ps1Input, stepsInput, arrivalInput, managerArrivalInput, minInvestorDaysInput, managerUtilLimitInput]
   .forEach(el => el.addEventListener("input", updateLabels));
 
 function adjustStepsForMode(mode) {
@@ -120,6 +126,7 @@ function updateMetricsAtIndex(idx) {
   metricToken.textContent = m.tokenPrice.toFixed(4);
   metricUtil.textContent = (m.utilization * 100).toFixed(1) + "%";
   metricInvestors.textContent = m.activeInvestors;
+  metricManagers.textContent = m.activeManagers ?? "–";
 }
 
 timeSlider.addEventListener("input", () => {
@@ -173,6 +180,7 @@ function updateLeaderboards(sim) {
   const outcomes = buildOutcomeSummary(sim);
   updateOutcomePies(outcomes);
   renderExitQueue(sim.exitQueue || []);
+  renderTransactions(sim.transactions || []);
 }
 
 function clearLeaderboards(message) {
@@ -197,6 +205,16 @@ function clearExitQueue(message) {
   exitQueueBody.appendChild(tr);
 }
 
+function clearTransactions(message) {
+  transactionsBody.innerHTML = "";
+  const tr = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = 9;
+  td.textContent = message;
+  tr.appendChild(td);
+  transactionsBody.appendChild(tr);
+}
+
 function renderExitQueue(entries) {
   exitQueueBody.innerHTML = "";
   if (!entries || !entries.length) {
@@ -216,6 +234,45 @@ function renderExitQueue(entries) {
       <td>${formatCurrency(item.remainingUSD ?? 0)}</td>
     `;
     exitQueueBody.appendChild(tr);
+  });
+}
+
+function renderTransactions(entries) {
+  const filter = transactionsFilter?.value || "all";
+  const filtered = filter === "all" ? entries : (entries || []).filter(tx => tx.type === filter);
+  const list = filtered || [];
+  transactionsBody.innerHTML = "";
+  if (!list.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 9;
+    td.textContent = "No transactions";
+    tr.appendChild(td);
+    transactionsBody.appendChild(tr);
+    return;
+  }
+
+  list.forEach(tx => {
+    const tr = document.createElement("tr");
+    const tokenText = typeof tx.tokens === "number"
+      ? (tx.tokens >= 0 ? "+" : "") + tx.tokens.toFixed(4)
+      : "–";
+    const mgrShare = typeof tx.managerShare === "number" ? formatSignedCurrency(tx.managerShare) : "–";
+    const poolShare = typeof tx.poolShare === "number" ? formatSignedCurrency(tx.poolShare) : "–";
+    const managerInvest = typeof tx.managerInvest === "number" ? formatCurrency(tx.managerInvest) : "–";
+    const poolMatch = typeof tx.poolMatch === "number" ? formatCurrency(tx.poolMatch) : "–";
+    tr.innerHTML = `
+      <td>${tx.type}</td>
+      <td>${tx.day ?? "–"}</td>
+      <td>${tx.btcPrice ? formatCurrency(tx.btcPrice) : "–"}</td>
+      <td>${formatCurrency(tx.amountUSD ?? 0)}</td>
+      <td>${tokenText}</td>
+      <td>${managerInvest}</td>
+      <td>${poolMatch}</td>
+      <td>${mgrShare}</td>
+      <td>${poolShare}</td>
+    `;
+    transactionsBody.appendChild(tr);
   });
 }
 
@@ -256,10 +313,12 @@ resetBtn.addEventListener("click", () => {
   metricToken.textContent = "–";
   metricUtil.textContent = "–";
   metricInvestors.textContent = "–";
+  metricManagers.textContent = "–";
   playPauseBtn.disabled = true;
   resetBtn.disabled = true;
   clearLeaderboards("Reset — run again");
   clearExitQueue("Reset — run again");
+  clearTransactions("No transactions");
 });
 
 async function fetchHistoricalPrices() {
@@ -294,7 +353,8 @@ runBtn.addEventListener("click", async () => {
       steps: parseInt(stepsInput.value, 10),
       arrivalRate: parseFloat(arrivalInput.value),
       managerArrivalRate: parseFloat(managerArrivalInput.value),
-      minInvestorDays: parseInt(minInvestorDaysInput.value, 10)
+      minInvestorDays: parseInt(minInvestorDaysInput.value, 10),
+      managerUtilThreshold: parseFloat(managerUtilLimitInput.value)
     };
 
     const selectedMode = document.querySelector("input[name=priceMode]:checked")?.value || "synthetic";
@@ -343,4 +403,13 @@ updateLabels();
 adjustStepsForMode("synthetic");
 clearLeaderboards("Run simulation to see results");
 clearExitQueue("Queue empty");
+clearTransactions("No transactions");
 destroyPieCharts();
+
+if (transactionsFilter) {
+  transactionsFilter.addEventListener("change", () => {
+    if (currentSim) {
+      renderTransactions(currentSim.transactions || []);
+    }
+  });
+}

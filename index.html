@@ -68,6 +68,14 @@
 
       <div class="control-group">
         <div class="control-label">
+          <span>Max utilization for new managers</span>
+          <span class="value" id="managerUtilLimitLabel">90%</span>
+        </div>
+        <input type="range" min="0.8" max="1" step="0.01" value="0.9" id="managerUtilLimit">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
           <span>BTC price source</span>
           <span class="value" id="priceModeLabel">Synthetic</span>
         </div>
@@ -110,6 +118,10 @@
         <div class="metric-card">
           <div class="metric-label">Active investors</div>
           <div class="metric-value" id="metricInvestors">–</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Active managers</div>
+          <div class="metric-value" id="metricManagers">–</div>
         </div>
       </div>
 
@@ -244,6 +256,41 @@
           </thead>
           <tbody id="exitQueueBody">
             <tr><td colspan="3">Queue empty</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel full-span">
+      <h2>Transactions</h2>
+      <div class="table-card">
+        <div class="control-label" style="justify-content:flex-start; gap:.5rem;">
+          <span>Filter</span>
+          <select id="transactionsFilter">
+            <option value="all">All</option>
+            <option value="investor_deposit">Investor deposit</option>
+            <option value="investor_topup">Investor top-up</option>
+            <option value="investor_exit">Investor exit</option>
+            <option value="manager_entry">Manager entry</option>
+            <option value="manager_exit">Manager exit</option>
+          </select>
+        </div>
+        <table class="leaderboard">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Day</th>
+              <th>BTC price</th>
+              <th>Amount ($)</th>
+              <th>Tokens</th>
+              <th>Mgr invest</th>
+              <th>Pool match</th>
+              <th>Manager share</th>
+              <th>Pool share</th>
+            </tr>
+          </thead>
+          <tbody id="transactionsBody">
+            <tr><td colspan="9">No transactions</td></tr>
           </tbody>
         </table>
       </div>
