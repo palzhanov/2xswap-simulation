@@ -56,16 +56,55 @@ function clamp(x, a, b) {
   return Math.max(a, Math.min(b, x));
 }
 
+function shouldInvestorEnter(g) {
+  // higher probability to enter when recent growth is positive
+  const base = 0.15;
+  const sensitivity = 0.8;
+  const prob = clamp(base + sensitivity * clamp(g, -0.1, 0.2), 0.02, 0.8);
+  return Math.random() < prob;
+}
+
+function shouldManagerEnter(g) {
+  const base = 0.1;
+  const sensitivity = 0.6;
+  const prob = clamp(base + sensitivity * clamp(g, -0.1, 0.2), 0.01, 0.6);
+  return Math.random() < prob;
+}
+
+function investorTopUpAmount(inv) {
+  // allow modest top-ups relative to original wealth
+  const frac = 0.05 + Math.random() * 0.1;
+  return inv.wealth * frac;
+}
+
+function processExitQueue(state) {
+  const { exitQueue } = state;
+  let { cash } = state;
+  for (let i = 0; i < exitQueue.length; ) {
+    if (cash <= 0) break;
+    const q = exitQueue[i];
+    const pay = Math.min(cash, q.remainingUSD);
+    cash -= pay;
+    q.remainingUSD -= pay;
+    q.paidUSD += pay;
+    q.investor.exitAmount = q.paidUSD + q.remainingUSD;
+    if (q.remainingUSD <= 1e-6) {
+      exitQueue.splice(i, 1);
+    } else {
+      i++;
+    }
+  }
+  state.cash = cash;
+}
+
 // ---- Main simulation entry point ----
 function runSimulation(params) {
   const {
-    initialInvestors,
-    initialManagers,
     ps0,
     ps1,
     steps,
     arrivalRate,
-    initialRiskLevel,
+    managerArrivalRate,
     priceSeries
   } = params;
 
@@ -82,63 +121,29 @@ function runSimulation(params) {
 
   // Pool state
   let cash = 0;           // unutilized USD
-  let investedBTC = 0;    // BTC quantity
+  let managerLockedBTC = 0; // BTC locked in manager-matched contracts
   let totalTokens = 0;    // share tokens
   let poolValue = 0;
   let poolValuePrev = 0;
   let cumulativeFees = 0;
-  let riskLevel = initialRiskLevel; // target utilization 0..1
+  let lastProfitShareRate = ps0;
+  let exitQueue = [];
+  // Start with no investors or managers; entry happens via decision functions during simulation
 
-  // ---- Initialize investors ----
-  for (let i = 0; i < initialInvestors; i++) {
-    const t = pickInvestorType();
-    const wealth = t.min + Math.random() * (t.max - t.min);
-    const deposit = wealth * (0.4 + 0.4 * Math.random()); // invest 40–80%
-
-    const tokenPrice = totalTokens > 0 && poolValue > 0 ? poolValue / totalTokens : 1;
-    const minted = deposit / tokenPrice;
-    cash += deposit;
-    totalTokens += minted;
-    poolValue = cash + investedBTC * btcPrice;
-
-    investors.push({
-      id: "inv_" + i,
-      type: t.type,
-      wealth,
-      tokens: minted,
-      k: t.k,
-      c: t.c,
-      active: true,
-      entryStep: 0
-    });
-  }
-
-  // ---- Initialize managers ----
-  for (let j = 0; j < initialManagers; j++) {
-    const t = pickManagerType();
-    const aum = t.minAUM + Math.random() * (t.maxAUM - t.minAUM);
-    managers.push({
-      id: "mgr_" + j,
-      type: t.type,
-      aum,
-      k: t.k,
-      c: t.c,
-      feeAccrued: 0
-    });
-  }
-
-  // Initial rebalance to target risk
-  poolValue = cash + investedBTC * btcPrice;
-  let desiredInvested = poolValue * riskLevel;
-  if (desiredInvested > 0) {
-    const toInvest = Math.min(desiredInvested, cash);
-    investedBTC += toInvest / btcPrice;
-    cash -= toInvest;
-    poolValue = cash + investedBTC * btcPrice;
-  }
+  // Initial pool value
+  poolValue = cash + managerLockedBTC * btcPrice;
   poolValuePrev = poolValue;
 
   const metrics = [];
+  const managerArrivalChance = clamp(typeof managerArrivalRate === "number" ? managerArrivalRate : 0.15, 0, 1);
+  const managerArrivalMax = 2;
+  const minInvestorDays = Math.max(1, parseInt(params.minInvestorDays ?? 365, 10));
+
+  const payQueue = () => {
+    const st = { cash, exitQueue };
+    processExitQueue(st);
+    cash = st.cash;
+  };
 
   // ---- Time loop ----
   const totalSteps = Math.min(steps, prices.length);
@@ -147,9 +152,9 @@ function runSimulation(params) {
     btcPrice = prices[t];
 
     // 1) Market move on BTC exposure
-    const investedValuePrev = investedBTC * oldPrice;
-    const investedValueNew = investedBTC * btcPrice;
-    let poolBefore = poolValuePrev;
+    const totalInvestedBTC = managerLockedBTC;
+    const investedValuePrev = totalInvestedBTC * oldPrice;
+    const investedValueNew = totalInvestedBTC * btcPrice;
     let poolAfterMarket = cash + investedValueNew;
 
     const g = poolValuePrev > 0 ? (poolAfterMarket - poolValuePrev) / poolValuePrev : 0;
@@ -157,137 +162,189 @@ function runSimulation(params) {
     // 2) Utilization after market move
     const utilization = poolAfterMarket > 0 ? investedValueNew / poolAfterMarket : 0;
 
-    // 3) Profit and manager fees (only on positive profit)
-    const profit = Math.max(poolAfterMarket - poolValuePrev, 0);
-    const feeRate = ps0 + (ps1 - ps0) * utilization;
-    let managerFee = profit * feeRate;
+    // 3) Profit share rate driven by utilization
+    const profitShareRate = ps0 + (ps1 - ps0) * utilization;
+    lastProfitShareRate = profitShareRate;
 
-    if (managerFee > 0 && poolAfterMarket > 0) {
-      // Deduct fee from pool (cash first, then BTC)
-      let remaining = managerFee;
-      if (cash >= remaining) {
-        cash -= remaining;
-        remaining = 0;
-      } else {
-        remaining -= cash;
-        cash = 0;
-      }
-      if (remaining > 0) {
-        const btcToSell = remaining / btcPrice;
-        investedBTC = Math.max(0, investedBTC - btcToSell);
-      }
-      cumulativeFees += managerFee;
+    // Recompute pool after any price move (no separate fees now)
+    let poolAfterFees = cash + managerLockedBTC * btcPrice;
 
-      // Distribute to managers based on their AUM proportion
-      let totalAUM = managers.reduce((acc, m) => acc + m.aum, 0);
-      if (totalAUM <= 0) totalAUM = 1;
-      for (const m of managers) {
-        const w = m.aum / totalAUM;
-        m.feeAccrued += managerFee * w;
+    // Investor top-ups (existing holders adding more)
+    poolValue = cash + managerLockedBTC * btcPrice;
+    const tokenPriceTopUp = totalTokens > 0 && poolValue > 0 ? poolValue / totalTokens : 1;
+    for (const inv of investors) {
+      if (!inv.active || inv.tokens <= 0) continue;
+      const topUpProb = clamp(0.05 + g, 0, 0.35);
+      if (Math.random() < topUpProb) {
+        const add = investorTopUpAmount(inv);
+        const minted = tokenPriceTopUp > 0 ? add / tokenPriceTopUp : 0;
+        cash += add;
+        payQueue();
+        totalTokens += minted;
+        inv.tokens += minted;
+        inv.invested += add;
       }
     }
 
-    // Recompute pool after fees
-    let poolAfterFees = cash + investedBTC * btcPrice;
+    // 5) Manager exits (logistic based on pool growth)
+    for (const mgr of managers) {
+      if (!mgr.open || mgr.btc <= 0) continue;
+      const contractAge = t - (mgr.entryStep ?? 0);
+      const forcedExit = contractAge >= 365;
+      let shouldExit = forcedExit;
 
-    // 4) Managers derisk / rerisk -> adjust global riskLevel
-    if (managers.length > 0) {
-      let avgDeriskProb = 0;
-      for (const m of managers) {
-        avgDeriskProb += logistic(g, m.k, m.c);
+      if (!shouldExit && poolValuePrev > 0) {
+        const pExit = logistic(g, mgr.k, mgr.c);
+        shouldExit = Math.random() < pExit;
       }
-      avgDeriskProb /= managers.length;
 
-      if (avgDeriskProb > 0.5) {
-        riskLevel = clamp(riskLevel - 0.03, 0, 1);
-      } else if (avgDeriskProb < 0.2 && g > 0) {
-        riskLevel = clamp(riskLevel + 0.02, 0, 1);
+      if (shouldExit) {
+        const proceeds = mgr.btc * btcPrice;
+        cash += proceeds;
+        payQueue();
+        managerLockedBTC = Math.max(0, managerLockedBTC - mgr.btc);
+
+        const totalInitial = mgr.stake + mgr.poolMatch;
+        const pnl = proceeds - totalInitial;
+        let managerPayout = 0;
+
+        if (pnl >= 0) {
+          const managerProfit = pnl * profitShareRate;
+          managerPayout = mgr.stake + managerProfit;
+          cumulativeFees += pnl - managerProfit; // pool share tracked as fees to reuse metric
+        } else {
+          const poolRecovery = Math.min(proceeds, mgr.poolMatch);
+          const remainingAfterPool = proceeds - poolRecovery;
+          managerPayout = Math.max(0, remainingAfterPool);
+        }
+
+        cash -= Math.min(cash, managerPayout);
+
+        mgr.payout = managerPayout;
+        mgr.profit = managerPayout - mgr.stake;
+        mgr.exitStep = t;
+        mgr.open = false;
+        mgr.btc = 0;
       }
     }
 
-    // Rebalance to riskLevel (target utilization)
-    poolAfterFees = cash + investedBTC * btcPrice;
-    let targetInvested = poolAfterFees * riskLevel;
-    let currentInvested = investedBTC * btcPrice;
+    // Manager entries (decision-based)
+    if (Math.random() < managerArrivalChance) {
+      const newManagers = 1 + Math.floor(Math.random() * managerArrivalMax);
+      for (let mIdx = 0; mIdx < newManagers; mIdx++) {
+        if (!shouldManagerEnter(g)) continue;
+        const tType = pickManagerType();
+        const aum = tType.minAUM + Math.random() * (tType.maxAUM - tType.minAUM);
+        cash += aum;
+        payQueue();
+        const stake = Math.min(aum, cash);
+        cash -= stake;
+        const poolMatch = Math.max(0, Math.min(stake, cash));
+        cash -= poolMatch;
+        const totalToInvest = stake + poolMatch;
+        const btcBought = totalToInvest > 0 ? totalToInvest / btcPrice : 0;
+        managerLockedBTC += btcBought;
 
-    if (targetInvested > currentInvested) {
-      const toInvest = Math.min(targetInvested - currentInvested, cash);
-      investedBTC += toInvest / btcPrice;
-      cash -= toInvest;
-    } else if (targetInvested < currentInvested) {
-      const diff = currentInvested - targetInvested;
-      const btcToSell = diff / btcPrice;
-      investedBTC = Math.max(0, investedBTC - btcToSell);
-      cash += diff;
+        managers.push({
+          id: "mgr_new_" + t + "_" + mIdx + "_" + Math.random().toString(16).slice(2),
+          type: tType.type,
+          aum: stake,
+          k: tType.k,
+          c: tType.c,
+          stake,
+          poolMatch,
+          btc: btcBought,
+          entryPrice: btcPrice,
+          entryStep: t,
+          open: btcBought > 0,
+          profit: 0,
+          payout: 0,
+          exitStep: null
+        });
+      }
     }
 
-    // 5) Investor exits (logistic based on pool growth)
-    poolValue = cash + investedBTC * btcPrice;
+    // 6) Investor exits (logistic based on pool growth)
+    poolValue = cash + managerLockedBTC * btcPrice;
     const tokenPrice = totalTokens > 0 && poolValue > 0 ? poolValue / totalTokens : 1;
     let exitsThisStep = 0;
 
     for (const inv of investors) {
       if (!inv.active || inv.tokens <= 0) continue;
       const contractAge = t - (inv.entryStep ?? 0);
-      const forcedExit = contractAge >= 365; // auto-terminate after 1 year
+      const forcedExit = contractAge >= Math.max(minInvestorDays, 540); // hard cap near 18 months
       let shouldExit = forcedExit;
 
-      if (!shouldExit && poolValuePrev > 0) {
-        const pExit = logistic(g, inv.k, inv.c);
+      if (!shouldExit && poolValuePrev > 0 && contractAge >= minInvestorDays) {
+        const pExitRaw = logistic(g, inv.k, inv.c);
+        const exitScale = contractAge < (minInvestorDays + 180) ? 0.6 : 1;
+        const pExit = pExitRaw * exitScale;
         shouldExit = Math.random() < pExit;
       }
 
       if (shouldExit) {
-        // Exit: redeem tokens and distribute value
+        // Exit: redeem tokens, use cash first, queue remainder
         const payout = inv.tokens * tokenPrice;
-        let remaining = payout;
-        if (cash >= remaining) {
-          cash -= remaining;
-          remaining = 0;
-        } else {
-          remaining -= cash;
-          cash = 0;
-        }
-        if (remaining > 0) {
-          const btcToSell = remaining / btcPrice;
-          investedBTC = Math.max(0, investedBTC - btcToSell);
-        }
+        const requestedTokens = inv.tokens;
+        let paid = Math.min(cash, payout);
+        cash -= paid;
+        let remaining = payout - paid;
         totalTokens -= inv.tokens;
         inv.tokens = 0;
         inv.active = false;
+        inv.exitAmount = paid + remaining;
+        inv.paidOut = (inv.paidOut || 0) + paid;
+        inv.exitStep = t;
         exitsThisStep++;
+
+        if (remaining > 0) {
+          exitQueue.push({
+            id: inv.id,
+            investor: inv,
+            tokens: requestedTokens,
+            requestedTokens: requestedTokens,
+            totalUSD: payout,
+            remainingUSD: remaining,
+            paidUSD: paid
+          });
+        }
       }
     }
 
     // 6) New investor arrivals
     const arrivals = Math.random() < arrivalRate ? (1 + Math.floor(Math.random() * 3)) : 0;
     for (let k = 0; k < arrivals; k++) {
+      if (!shouldInvestorEnter(g)) continue;
       const tType = pickInvestorType();
       const wealth = tType.min + Math.random() * (tType.max - tType.min);
       const deposit = wealth * (0.3 + 0.3 * Math.random());
 
-      const currentPool = cash + investedBTC * btcPrice;
+      const currentPool = cash + managerLockedBTC * btcPrice;
       const tPrice = totalTokens > 0 && currentPool > 0 ? currentPool / totalTokens : 1;
       const minted = deposit / tPrice;
       cash += deposit;
+      payQueue();
       totalTokens += minted;
 
       investors.push({
         id: "inv_new_" + t + "_" + k + "_" + Math.random().toString(16).slice(2),
         type: tType.type,
-      wealth,
-      tokens: minted,
-      k: tType.k,
-      c: tType.c,
-      active: true,
-      entryStep: t
-    });
-  }
+        wealth,
+        tokens: minted,
+        k: tType.k,
+        c: tType.c,
+        active: true,
+        entryStep: t,
+        invested: deposit,
+        exitAmount: 0,
+        exitStep: null
+      });
+    }
 
     // 7) Final pool state for this step
-    poolValue = cash + investedBTC * btcPrice;
+    poolValue = cash + managerLockedBTC * btcPrice;
     const finalTokenPrice = totalTokens > 0 && poolValue > 0 ? poolValue / totalTokens : 1;
-    const finalUtilization = poolValue > 0 ? (investedBTC * btcPrice) / poolValue : 0;
+    const finalUtilization = poolValue > 0 ? (managerLockedBTC * btcPrice) / poolValue : 0;
 
     const activeInvestors = investors.filter(inv => inv.active && inv.tokens > 0).length;
 
@@ -296,16 +353,61 @@ function runSimulation(params) {
       poolValue,
       tokenPrice: finalTokenPrice,
       utilization: finalUtilization,
-      feeRate,
       activeInvestors,
       exits: exitsThisStep,
       cumulativeFees,
-      riskLevel,
       btcPrice
     });
 
     poolValuePrev = poolValue;
   }
 
-  return { metrics };
+  const finalPoolValue = poolValuePrev;
+  const finalStep = totalSteps - 1;
+  const finalTokenPrice = totalTokens > 0 && finalPoolValue > 0 ? finalPoolValue / totalTokens : 1;
+  const finalProfitShare = lastProfitShareRate;
+
+  const investorPnL = investors.map(inv => {
+    const exitVal = inv.exitAmount > 0 ? inv.exitAmount : inv.tokens * finalTokenPrice;
+    const heldDays = Math.max(1, (inv.exitStep ?? finalStep) - (inv.entryStep ?? 0));
+    return {
+      id: inv.id,
+      invested: inv.invested,
+      exitAmount: exitVal,
+      profit: exitVal - inv.invested,
+      days: heldDays
+    };
+  });
+
+  const managerPnL = managers.map(m => {
+    const exitVal = m.payout > 0
+      ? m.payout
+      : (() => {
+        const proceeds = (m.btc || 0) * btcPrice;
+        const totalInitial = (m.stake || 0) + (m.poolMatch || 0);
+        const pnl = proceeds - totalInitial;
+        if (pnl >= 0) {
+          return (m.stake || 0) + pnl * finalProfitShare;
+        }
+        const poolRecovery = Math.min(proceeds, m.poolMatch || 0);
+        return Math.max(0, proceeds - poolRecovery);
+      })();
+    const heldDays = Math.max(1, (m.exitStep ?? finalStep) - (m.entryStep ?? 0));
+    return {
+      id: m.id,
+      invested: m.stake || 0,
+      exitAmount: exitVal,
+      profit: exitVal - (m.stake || 0),
+      days: heldDays
+    };
+  });
+
+  const exitQueueView = exitQueue.map(q => ({
+    id: q.id,
+    tokens: q.requestedTokens,
+    remainingUSD: q.remainingUSD,
+    totalUSD: q.totalUSD
+  }));
+
+  return { metrics, investorPnL, managerPnL, exitQueue: exitQueueView };
 }

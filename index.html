@@ -20,22 +20,6 @@
 
       <div class="control-group">
         <div class="control-label">
-          <span>Initial investors</span>
-          <span class="value" id="investorCountLabel">150</span>
-        </div>
-        <input type="range" min="10" max="500" value="150" id="investorCount">
-      </div>
-
-      <div class="control-group">
-        <div class="control-label">
-          <span>Initial managers</span>
-          <span class="value" id="managerCountLabel">40</span>
-        </div>
-        <input type="range" min="4" max="200" value="40" id="managerCount">
-      </div>
-
-      <div class="control-group">
-        <div class="control-label">
           <span>Profit share @ 0% utilization</span>
           <span class="value" id="ps0Label">5%</span>
         </div>
@@ -68,10 +52,18 @@
 
       <div class="control-group">
         <div class="control-label">
-          <span>Initial risk level (utilization)</span>
-          <span class="value" id="riskLabel">70%</span>
+          <span>New manager arrival intensity</span>
+          <span class="value" id="managerArrivalLabel">0.15</span>
         </div>
-        <input type="range" min="0" max="1" step="0.05" value="0.7" id="riskLevel">
+        <input type="range" min="0" max="1" step="0.05" value="0.15" id="managerArrivalRate">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Min investor days</span>
+          <span class="value" id="minInvestorDaysLabel">365</span>
+        </div>
+        <input type="range" min="30" max="720" step="15" value="365" id="minInvestorDays">
       </div>
 
       <div class="control-group">
@@ -116,10 +108,6 @@
           <div class="metric-value" id="metricUtil">–</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Fee rate</div>
-          <div class="metric-value" id="metricFeeRate">–</div>
-        </div>
-        <div class="metric-card">
           <div class="metric-label">Active investors</div>
           <div class="metric-value" id="metricInvestors">–</div>
         </div>
@@ -148,11 +136,116 @@
           <canvas id="poolChart"></canvas>
         </div>
         <div class="chart-wrapper">
+          <canvas id="tokenChart"></canvas>
+        </div>
+        <div class="chart-wrapper">
           <canvas id="utilChart"></canvas>
         </div>
         <div class="chart-wrapper">
           <canvas id="btcChart"></canvas>
         </div>
+      </div>
+      <div class="pie-charts">
+        <div class="pie-card">
+          <div class="pie-title">Investor outcomes</div>
+          <div class="pie-wrapper"><canvas id="investorPieChart"></canvas></div>
+        </div>
+        <div class="pie-card">
+          <div class="pie-title">Manager outcomes</div>
+          <div class="pie-wrapper"><canvas id="managerPieChart"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel full-span">
+      <h2>PNL leaderboards</h2>
+      <div class="leaderboards">
+        <div class="table-card">
+          <div class="table-title">Top 10 investor gains</div>
+          <table class="leaderboard">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Invested</th>
+                <th>Exit</th>
+                <th>Profit</th>
+                <th>Days</th>
+              </tr>
+            </thead>
+            <tbody id="investorProfitBody">
+              <tr><td colspan="5">Run simulation to see results</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-card">
+          <div class="table-title">Top 10 investor losses</div>
+          <table class="leaderboard">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Invested</th>
+                <th>Exit</th>
+                <th>Profit</th>
+                <th>Days</th>
+              </tr>
+            </thead>
+            <tbody id="investorLossBody">
+              <tr><td colspan="5">Run simulation to see results</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-card">
+          <div class="table-title">Top 10 manager gains</div>
+          <table class="leaderboard">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Invested</th>
+                <th>Exit</th>
+                <th>Profit</th>
+                <th>Days</th>
+              </tr>
+            </thead>
+            <tbody id="managerProfitBody">
+              <tr><td colspan="5">Run simulation to see results</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-card">
+          <div class="table-title">Top 10 manager losses</div>
+          <table class="leaderboard">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Invested</th>
+                <th>Exit</th>
+                <th>Profit</th>
+                <th>Days</th>
+              </tr>
+            </thead>
+            <tbody id="managerLossBody">
+              <tr><td colspan="5">Run simulation to see results</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel full-span">
+      <h2>Exit queue</h2>
+      <div class="table-card">
+        <table class="leaderboard">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Tokens</th>
+              <th>Pending ($)</th>
+            </tr>
+          </thead>
+          <tbody id="exitQueueBody">
+            <tr><td colspan="3">Queue empty</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
