@@ -136,8 +136,8 @@ function runSimulation(params) {
   poolValuePrev = poolValue;
 
   const metrics = [];
-  const managerArrivalChance = clamp(typeof managerArrivalRate === "number" ? managerArrivalRate : 0.15, 0, 1);
-  const managerArrivalMax = 10;
+  const managerArrivalChance = clamp(typeof managerArrivalRate === "number" ? managerArrivalRate : 0.70, 0, 1);
+  const managerArrivalMax = 50;
   const minInvestorDays = Math.max(1, parseInt(params.minInvestorDays ?? 365, 10));
   const managerUtilLimit = clamp(typeof params.managerUtilThreshold === "number" ? params.managerUtilThreshold : 0.9, 0.8, 1);
 
@@ -225,19 +225,19 @@ function runSimulation(params) {
           poolShare = Math.min(proceeds, mgr.poolMatch);
           const remainingAfterPool = proceeds - poolShare;
           managerPayout = Math.max(0, remainingAfterPool);
-          managerShare = managerPayout - mgr.stake;
+          managerShare = managerPayout; // - mgr.stake;
         }
 
         cash += proceeds;
-        payQueue();
         managerLockedBTC = Math.max(0, managerLockedBTC - mgr.btc);
         cash -= Math.min(cash, managerPayout);
-
+        
         mgr.payout = managerPayout;
         mgr.profit = managerPayout - mgr.stake;
         mgr.exitStep = t;
         mgr.open = false;
         mgr.btc = 0;
+        payQueue();
 
         transactions.push({
           type: "manager_exit",
@@ -262,7 +262,7 @@ function runSimulation(params) {
         const stake = aum;
         const poolMatch = aum;
         const totalToInvest = stake + poolMatch;
-        cash -= totalToInvest;
+        cash -= poolMatch;
         const btcBought = totalToInvest > 0 ? totalToInvest / btcPrice : 0;
         managerLockedBTC += btcBought;
 
@@ -321,33 +321,36 @@ function runSimulation(params) {
         let paid = Math.min(cash, payout);
         cash -= paid;
         let remaining = payout - paid;
-        totalTokens -= inv.tokens;
-        inv.tokens = 0;
-        inv.active = false;
-        inv.exitAmount = paid + remaining;
+        let tokensBurnt = paid / tokenPrice;
+        totalTokens -= tokensBurnt;
+        inv.tokens -= tokensBurnt;
+        inv.exitAmount = (inv.exitAmount || 0) + paid;
         inv.paidOut = (inv.paidOut || 0) + paid;
         inv.exitStep = t;
         exitsThisStep++;
-
-        if (remaining > 0) {
-          exitQueue.push({
-            id: inv.id,
-            investor: inv,
-            tokens: requestedTokens,
-            requestedTokens: requestedTokens,
-            totalUSD: payout,
-            remainingUSD: remaining,
-            paidUSD: paid
+        if( remaining > 0){
+          inv.active = true;
+          transactions.push({
+            type: "investor_partial_withdrawal",
+            day: t,
+            btcPrice,
+            amountUSD: paid,
+            tokens: -tokensBurnt
           });
+
+        } else{
+          inv.active = false;
+          transactions.push({
+            type: "investor_exit",
+            day: t,
+            btcPrice,
+            amountUSD: paid,
+            tokens: -requestedTokens
+          });
+
         }
 
-        transactions.push({
-          type: "investor_exit",
-          day: t,
-          btcPrice,
-          amountUSD: payout,
-          tokens: -requestedTokens
-        });
+        
       }
     }
 
@@ -363,8 +366,8 @@ function runSimulation(params) {
       const tPrice = totalTokens > 0 && currentPool > 0 ? currentPool / totalTokens : 1;
       const minted = deposit / tPrice;
       cash += deposit;
-      payQueue();
       totalTokens += minted;
+      payQueue();
 
       investors.push({
         id: "inv_new_" + t + "_" + k + "_" + Math.random().toString(16).slice(2),
